@@ -1,10 +1,15 @@
 <?php
 
-use \Bitrix\Main\Application,
-    \Bitrix\Main\Loader,
-    \Bitrix\Main\Mail\Event;
+namespace Custom;
 
-class CustomFormComponent extends CBitrixComponent
+use Bitrix\Main\Application,
+    Bitrix\Main\Loader,
+    Bitrix\Main\Mail\Event,
+    CBitrixComponent,
+    CFile,
+    CIBlockElement;
+
+class Form extends CBitrixComponent
 {
     public function executeComponent()
     {
@@ -12,7 +17,7 @@ class CustomFormComponent extends CBitrixComponent
 
         $request = Application::getInstance()->getContext()->getRequest();
 
-        if ($request->getPost("TOKEN") == $this->arParams["TOKEN"]) {
+        if ($request->getPost("TOKEN") === $this->arParams["TOKEN"]) {
             $APPLICATION->RestartBuffer();
 
             $post_list = $request->getPostList()->toArray();
@@ -21,14 +26,21 @@ class CustomFormComponent extends CBitrixComponent
 
             if ($this->arParams["RECAPTCHA_ENABLED"] === 'Y') {
                 if (!$this->recaptcha($post_list["RECAPTCHA"])) {
-                    echo json_encode(["status" => false, "message" => "Не пройдена проверка reCAPTCHA"]);
-                    exit();
+                    $this->out([
+                        "status" => false,
+                        "message" => "Не пройдена проверка reCAPTCHA"
+                    ]);
                 }
             }
 
             $available_props = $this->arParams["PROPS"];
             $iblock_id = $this->arParams["IBLOCK_ID"];
-            $iblock_el_id = $this->save($iblock_id, $props, $available_props);
+            $save_r = $this->save($iblock_id, $props, $available_props);
+            $iblock_el_id = $save_r["ID"];
+
+            if ($save_r["status"] === false) {
+                $this->out($save_r);
+            }
 
             $db_list = CIBlockElement::GetList(
                 ["SORT" => "ASC"],
@@ -63,8 +75,7 @@ class CustomFormComponent extends CBitrixComponent
                 Event::send($event_params);
             }
 
-            echo json_encode(["status" => true, "message" => "Форма успешно отправлена"]);
-            exit();
+            $this->out(["status" => true, "message" => "Форма успешно отправлена"]);
         }
 
         $this->includeComponentTemplate();
@@ -87,7 +98,12 @@ class CustomFormComponent extends CBitrixComponent
     private function save($iblock_id, $props, $available_props)
     {
 
-        if (!Loader::includeModule("iblock")) die();
+        if (!Loader::includeModule("iblock")) {
+            return [
+                "status" => false,
+                "message" => "Не удалось подключить модуль 'iblock'"
+            ];
+        };
 
         $el = new CIBlockElement;
         $fields = [
@@ -119,7 +135,19 @@ class CustomFormComponent extends CBitrixComponent
         }
         $id = $el->Add($fields);
 
-        return $id;
+        if ($id === false) {
+            return [
+                "status" => false,
+                "message" => "Не удалось создать элемент",
+                "LAST_ERROR" => $el->LAST_ERROR
+            ];
+        }
+
+        return [
+            "status" => true,
+            "message" => "Элемент успешно создан",
+            "ID" => $id
+        ];
     }
 
     private function normalizeFiles($vector)
@@ -133,5 +161,11 @@ class CustomFormComponent extends CBitrixComponent
         }
 
         return $result;
+    }
+
+    private function out($output): void
+    {
+        echo json_encode($output);
+        exit();
     }
 }
